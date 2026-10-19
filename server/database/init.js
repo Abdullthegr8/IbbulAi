@@ -35,11 +35,37 @@ export const db = new Pool({
   max: Number(process.env.DB_POOL_MAX) || 10,  // Supabase's pooler limits connections per project
 });
 
+/**
+ * Semantic search needs the pgvector extension (built into Supabase). Without it
+ * the app still runs, with keyword search only. `schema` is where the extension
+ * lives (Supabase puts extensions in "extensions"), used to qualify its type and operator.
+ */
+export const vectorInfo = { ready: false, schema: null };
+
+async function setupVector() {
+  try {
+    const hasExtSchema = (await db.query("SELECT 1 FROM pg_namespace WHERE nspname = 'extensions'")).rowCount > 0;
+    await db.query(`CREATE EXTENSION IF NOT EXISTS vector${hasExtSchema ? ' WITH SCHEMA extensions' : ''}`);
+    const { rows } = await db.query("SELECT extnamespace::regnamespace::text AS schema FROM pg_extension WHERE extname = 'vector'");
+    const s = rows[0].schema;
+    await db.query(`
+      ALTER TABLE kb_chunks ADD COLUMN IF NOT EXISTS embedding    ${s}.vector(384);
+      ALTER TABLE kb_chunks ADD COLUMN IF NOT EXISTS content_hash TEXT;  -- reuse embeddings for unchanged passages
+      CREATE INDEX IF NOT EXISTS idx_kb_chunks_embedding ON kb_chunks USING hnsw (embedding ${s}.vector_cosine_ops);
+    `);
+    Object.assign(vectorInfo, { ready: true, schema: s });
+    console.log(`[DB] pgvector ready (schema "${s}") — semantic search on`);
+  } catch (err) {
+    console.warn('[DB] pgvector not available — keyword search only:', err.message);
+  }
+}
+
 export async function initDB() {
   try {
     const client = await db.connect();
     client.release();
     await createTables();
+    await setupVector();
     console.log('[DB] PostgreSQL connected and tables ready');
   } catch (err) {
     console.warn('[DB] PostgreSQL not available:', err.message);

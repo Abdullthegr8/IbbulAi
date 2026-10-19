@@ -56,11 +56,14 @@ The model is fixed by `GROQ_MODEL` in `server/.env` (default `qwen/qwen3.8-27b`)
 
 ## Knowledge Base Agent (RAG retrieval)
 
-**Files:** `server/services/kbIndex.js` (indexing), `server/services/rag.js` (search), `server/services/localKB.js` (built-in entries)
+**Files:** `server/services/kbIndex.js` (indexing), `server/services/rag.js` (search), `server/services/embeddings.js` + `supabase/functions/embed` (embeddings), `server/services/localKB.js` (built-in entries)
 
 1. **Index at write time.** Built-in entries, knowledge base entries, uploaded documents and announcements are split into ~1,000-character passages (150-character overlap, following section headings) and stored in `kb_chunks`, which has a weighted `tsvector` column (title/keywords > heading > text) and a GIN index. Each create / update / delete re-indexes that source; the whole index is rebuilt on server start.
-2. **Search.** The question's terms are matched with PostgreSQL full-text search (English stemming, prefix matching for longer words). Passages are scored by rarity-weighted coverage of the question (IDF), a boost for matches in the source's title, `ts_rank_cd`, and a small bonus for announcements and curated KB entries.
-3. **Relevance gate.** A passage counts only if it matches enough of the question's terms (or the question names the source's subject); passages scoring under 60% of the best are dropped; at most 2 passages per source, `rag_top_k` passages in total. No match → the model is told there is no verified information (→ `<unanswered/>` → staff inbox).
+2. **Hybrid search.**
+   - *Keyword:* the question's terms are matched with PostgreSQL full-text search (English stemming, prefix matching for longer words). Passages are scored by rarity-weighted coverage of the question (IDF), a boost for matches in the source's title, `ts_rank_cd`, and a small bonus for announcements and curated KB entries.
+   - *Semantic:* the question is embedded with gte-small (Supabase Edge Function `embed`, `server/services/embeddings.js`) and compared with passage embeddings by pgvector cosine similarity (HNSW index).
+   - The two rankings are merged with **Reciprocal Rank Fusion** (k = 60). Without pgvector or the function, keyword search runs alone.
+3. **Relevance gate.** A passage counts only if it matches enough of the question's terms (or the question names the source's subject), or is a very close semantic match (similarity ≥ 0.83 — gte-small scores off-topic questions up to ~0.82, so similarity alone can't gate); passages scoring under 60% of the best are dropped; at most 2 passages per source, `rag_top_k` passages in total. No match → the model is told there is no verified information (→ `<unanswered/>` → staff inbox).
 4. **Follow-ups.** Short or unmatched questions are searched again together with the previous question, so "what about direct entry?" finds the admissions entry.
 5. **Citations.** Sources are numbered in the context; the model cites them as `[n]`. The response and `chat_logs.sources` carry the source list, shown under each answer.
 

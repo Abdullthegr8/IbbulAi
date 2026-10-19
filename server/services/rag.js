@@ -1,18 +1,25 @@
 /**
  * Knowledge base search (retrieval for RAG).
  *
- * searchKnowledgeBase() runs a weighted full-text search over kb_chunks —
- * passages from the built-in entries, the knowledge_base table, uploaded
- * documents and current announcements (see kbIndex.js) — and returns the best
- * sources, numbered for citation. A passage is only used when it matches
- * enough of the question's terms, so weak matches fall through to the honest
+ * searchKnowledgeBase() runs a hybrid search over kb_chunks — passages from
+ * the built-in entries, the knowledge_base table, uploaded documents and
+ * current announcements (see kbIndex.js) — and returns the best sources,
+ * numbered for citation:
+ *   - keyword search: weighted PostgreSQL full-text search
+ *   - semantic search: pgvector cosine similarity of gte-small embeddings,
+ *     which finds "where do I sleep on campus?" → hostel accommodation
+ *   - the two rankings are merged with Reciprocal Rank Fusion
+ * A passage is only used when it matches enough of the question's terms, or is
+ * a very close semantic match, so weak matches fall through to the honest
  * "no verified answer" path instead of giving the model loosely related text.
+ * Without pgvector or the embed function, keyword search works on its own.
  *
  * searchDocument() instead searches inside a single document, for
  * "ask about this document" conversations.
  */
 
-import { db } from '../database/init.js';
+import { db, vectorInfo } from '../database/init.js';
+import { embedQuery, toPgVector } from './embeddings.js';
 import { getConfig } from './configService.js';
 import { LOCAL_KB } from './localKB.js';
 
@@ -44,6 +51,12 @@ const MAX_TERMS  = 10;
 const PER_SOURCE = 2;  // passages per source, so one long document can't crowd out the rest
 const SOURCE_BONUS = { announcement: 0.15, kb: 0.1, document: 0, builtin: 0 };  // newest / curated first on ties
 const RELATIVE_CUTOFF = 0.6;  // keep passages scoring at least 60% of the best match
+
+// gte-small similarities are compressed: related passages score ~0.79–0.92 and
+// off-topic questions still reach ~0.73–0.82 (calibrated on the built-in entries)
+const SIM_FLOOR  = 0.75;  // below this, similarity says nothing — ignored even for ranking
+const SIM_STRONG = 0.83;  // this close, a passage counts even without a keyword match
+const RRF_K      = 60;    // Reciprocal Rank Fusion constant (the standard value)
 const EMPTY = { sources: [], topic: null, foundInKB: false };
 
 // Question terms for full-text search: lowercase words, no stopwords
@@ -67,7 +80,7 @@ async function rankPassages(terms) {
 
   const [passages, stats] = await Promise.all([
     db.query(
-      `SELECT source_type, source_id, title, topic, url, heading, content, position, source_date,
+      `SELECT id, source_type, source_id, title, topic, url, heading, content, position, source_date,
               ts_rank_cd(search, query, 32) AS rank,
               ARRAY[${each.map(q => `search @@ ${q}`).join(', ')}] AS hits,
               ARRAY[${inTitle.map(q => `search @@ ${q}`).join(', ')}] AS title_hits
@@ -103,9 +116,50 @@ async function rankPassages(terms) {
     // a passage *about* course registration beats one that merely mentions it
     .map(r => ({ ...r, score: weigh(r.hits) + 0.75 * weigh(r.title_hits) + Number(r.rank) + SOURCE_BONUS[r.source_type] }))
     .sort((a, b) => b.score - a.score);
-  // Drop passages far weaker than the best one — they add noise, not answers
-  const best = ranked[0]?.score ?? 0;
-  return ranked.filter(r => r.score >= best * RELATIVE_CUTOFF);
+  return ranked;
+}
+
+/** Passages closest in meaning to the question (pgvector cosine distance). */
+async function semanticPassages(text) {
+  if (!vectorInfo.ready) return [];
+  const vector = await embedQuery(text);
+  if (!vector) return [];
+  const s = vectorInfo.schema;
+  const { rows } = await db.query(
+    `SELECT id, source_type, source_id, title, topic, url, heading, content, position, source_date,
+            1 - (embedding OPERATOR(${s}.<=>) $1::${s}.vector) AS similarity
+     FROM kb_chunks
+     WHERE embedding IS NOT NULL AND (expires_at IS NULL OR expires_at > NOW())
+     ORDER BY embedding OPERATOR(${s}.<=>) $1::${s}.vector
+     LIMIT 30`,
+    [toPgVector(vector)]
+  );
+  return rows.filter(r => r.similarity >= SIM_FLOOR);
+}
+
+// Drop passages far weaker than the best one — they add noise, not answers
+function cutoff(passages, scoreOf) {
+  const best = passages[0] ? scoreOf(passages[0]) : 0;
+  return passages.filter(p => scoreOf(p) >= best * RELATIVE_CUTOFF);
+}
+
+/**
+ * Reciprocal Rank Fusion: each list adds 1 / (k + rank) for each passage, so
+ * passages both searches rank highly come first. Kept: passages that passed the
+ * keyword relevance gate, or are very close semantic matches.
+ */
+function fuse(lexical, semantic) {
+  const byId = new Map();
+  const entry = p => {
+    if (!byId.has(p.id)) byId.set(p.id, { ...p, fused: 0, keyword: false, similarity: null });
+    return byId.get(p.id);
+  };
+  lexical.forEach((p, rank) => { const e = entry(p); e.fused += 1 / (RRF_K + rank + 1); e.keyword = true; });
+  semantic.forEach((p, rank) => { const e = entry(p); e.fused += 1 / (RRF_K + rank + 1); e.similarity = p.similarity; });
+  const kept = [...byId.values()]
+    .filter(e => e.keyword || e.similarity >= SIM_STRONG)
+    .sort((a, b) => b.fused - a.fused);
+  return cutoff(kept, e => e.fused);
 }
 
 // Database unavailable: keyword-match the built-in entries in memory
@@ -145,11 +199,15 @@ function toSources(passages) {
   return sources;
 }
 
-async function search(terms) {
-  if (terms.length === 0) return EMPTY;
+async function search(text) {
+  const terms = searchTerms(text);
   let passages;
   try {
-    passages = await rankPassages(terms);
+    const [lexical, semantic] = await Promise.all([
+      terms.length ? rankPassages(terms) : [],
+      semanticPassages(text),
+    ]);
+    passages = semantic.length ? fuse(lexical, semantic) : cutoff(lexical, p => p.score);
   } catch (err) {
     console.warn('[RAG] Search failed, using built-in entries only:', err.message);
     passages = rankBuiltinFallback(terms);
@@ -161,15 +219,15 @@ async function search(terms) {
 /**
  * Finds the knowledge base sources for a question. Follow-ups ("what about
  * direct entry?") don't say what they're about, so when the question is short
- * or finds nothing, the previous question's terms are added and the search
- * runs again — no extra LLM call needed.
+ * or finds nothing, the previous question is added and the search runs
+ * again — no extra LLM call needed.
  */
 export async function searchKnowledgeBase(question, { previousQuestion } = {}) {
   const terms = searchTerms(question);
-  let result = await search(terms);
+  let result = await search(question);
   if (previousQuestion && (!result.foundInKB || terms.length <= 3)) {
-    // Current terms first, so they survive the MAX_TERMS cut
-    const withContext = await search(searchTerms(`${question} ${previousQuestion}`));
+    // Current question first, so its terms survive the MAX_TERMS cut
+    const withContext = await search(`${question} ${previousQuestion}`);
     if (withContext.foundInKB) result = withContext;
   }
   return result;

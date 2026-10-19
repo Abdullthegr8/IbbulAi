@@ -17,7 +17,7 @@ import { errorHandler } from './middleware/errorHandler.js';
 import { initDB } from './database/init.js';
 import { loadConfig } from './services/configService.js';
 import { activeModel } from './providers/llm.js';
-import { rebuildIndex, ensureIndex } from './services/kbIndex.js';
+import { rebuildIndex, ensureIndex, backfillEmbeddings } from './services/kbIndex.js';
 
 const app  = express();
 const PORT = process.env.PORT || 5000;
@@ -98,6 +98,7 @@ function init() {
     await initDB();
     await loadConfig(); // Load settings from system_config table into memory
     await (ON_VERCEL ? ensureIndex() : rebuildIndex()); // Knowledge base search index (kb_chunks)
+    await backfillEmbeddings(); // semantic search vectors for any passages still without one
   })().catch(err => { _init = null; throw err; });
   return _init;
 }

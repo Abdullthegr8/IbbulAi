@@ -4,6 +4,14 @@ All notable changes to IbbulAI are documented here.
 
 ---
 
+## [Unreleased]
+
+### Added
+- **Semantic search (RAG phase 2)** — passages get gte-small embeddings (Supabase Edge Function `embed`, stored with pgvector + HNSW index); questions are searched by keyword and by meaning, merged with Reciprocal Rank Fusion. Embeddings are reused for unchanged passages and backfilled on startup; without pgvector or the function, keyword search runs alone
+- `SUPABASE_URL` / `EMBED_SECRET` settings (replace the unused `CHROMA_*` ones)
+
+---
+
 ## [1.8.0] — 2026
 
 ### Added

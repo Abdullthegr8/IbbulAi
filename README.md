@@ -15,7 +15,7 @@
 ## Features
 
 - **Natural language chat** — ask questions in plain English, receive formatted markdown responses
-- **Knowledge base first (RAG)** — built-in entries, staff KB entries, uploaded documents and announcements are indexed into passages and searched with PostgreSQL full-text search before the LLM is called; answers cite their sources
+- **Knowledge base first (RAG)** — built-in entries, staff KB entries, uploaded documents and announcements are indexed into passages and searched with hybrid keyword + semantic search (PostgreSQL full-text search and pgvector) before the LLM is called; answers cite their sources
 - **Rich markdown responses** — headers, numbered steps, bullet points, bold, blockquotes
 - **Groq LLM** — powered by `qwen/qwen3.8-27b` (Qwen3.8 27B)
 - **Document retrieval** — upload, search, preview, and download documents via Cloudinary
@@ -153,6 +153,20 @@ ALTER TABLE chat_logs ADD COLUMN IF NOT EXISTS user_id UUID REFERENCES users(id)
 
 ---
 
+## Semantic Search (Supabase Edge Function)
+
+Alongside keyword search, IbbulAI searches by meaning — "where do I sleep on campus?" finds the hostel entry with no shared keywords. Passages are embedded with Supabase's built-in **gte-small** model through a small Edge Function, and stored in `kb_chunks.embedding` (pgvector, enabled automatically on Supabase). Without it, keyword search works on its own.
+
+One-time setup:
+
+1. **Deploy the function.** Supabase Dashboard → **Edge Functions** → **Deploy a new function** → **Via editor**. Name it `embed`, replace the sample code with `supabase/functions/embed/index.ts`, and deploy.
+   (Or with the CLI: `npx supabase functions deploy embed --no-verify-jwt --project-ref <ref>`.)
+2. **Turn off JWT verification** for `embed` (the function's **Details/Settings** → *Verify JWT* off). The server authenticates with a shared secret instead.
+3. **Add the secret.** **Edge Functions → Secrets** → add `EMBED_SECRET` with the same value as `EMBED_SECRET` in `server/.env` (generate one with `openssl rand -hex 32`).
+4. Set `SUPABASE_URL=https://<project-ref>.supabase.co` and `EMBED_SECRET` in `server/.env`, and restart. Existing passages are embedded on startup (`[KB Index] Embedded N passages…`).
+
+---
+
 ## Deploying to Vercel
 
 The repo deploys as one Vercel project: the React app is served as a static site and the Express server runs as a serverless function under `/api` (`api/index.js`, configured in `vercel.json`).
@@ -164,6 +178,7 @@ The repo deploys as one Vercel project: the React app is served as a static site
    - `DB_SSL_CA` — paste the certificate text itself (there's no file to point at)
    - `CLOUDINARY_*` — required; Vercel's disk is temporary, so local uploads would be lost
    - `CLIENT_URL` — your Vercel URL; leave out `PORT`
+   - `SUPABASE_URL` and `EMBED_SECRET` — for semantic search (see above)
 3. Deploy, then check `https://<your-app>.vercel.app/api/health`.
 
 On Vercel, uploads are capped at 4 MB (Vercel rejects request bodies over 4.5 MB), and the search index is rebuilt only when the built-in entries change rather than on every start.
