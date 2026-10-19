@@ -7,9 +7,11 @@
  * GIN index. Sources are indexed when they are written, not on every question.
  *
  * The whole index is rebuilt on server start, which also repairs any drift
- * (e.g. if indexing a single source failed).
+ * (e.g. if indexing a single source failed). On Vercel, where every instance
+ * starts cold, ensureIndex() rebuilds only when the built-in entries change.
  */
 
+import crypto from 'node:crypto';
 import { db } from '../database/init.js';
 import { LOCAL_KB } from './localKB.js';
 
@@ -149,6 +151,8 @@ export async function rebuildIndex() {
   const client = await db.connect();
   try {
     await client.query('BEGIN');
+    // Instances starting at the same time rebuild one after another
+    await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', ['kb_index_rebuild']);
     await client.query('DELETE FROM kb_chunks');
     for (const [i, e] of LOCAL_KB.entries()) {
       await replaceSource('builtin', i, { title: e.topic, keywords: e.keywords.join(' '), topic: e.topic },
@@ -165,10 +169,30 @@ export async function rebuildIndex() {
     await client.query('COMMIT');
     const { rows } = await client.query('SELECT COUNT(*)::int AS n FROM kb_chunks');
     console.log(`[KB Index] ${rows[0].n} passages from ${LOCAL_KB.length} built-in entries, ${kb.rows.length} KB entries, ${docs.rows.length} documents, ${anns.rows.length} announcements`);
+    return true;
   } catch (err) {
     await client.query('ROLLBACK').catch(() => {});
     console.warn('[KB Index] Rebuild failed:', err.message);
+    return false;
   } finally {
     client.release();
+  }
+}
+
+/** Rebuilds the index only if it was built from different built-in entries (or never built). */
+export async function ensureIndex() {
+  const version = crypto.createHash('sha256').update(JSON.stringify(LOCAL_KB)).digest('hex').slice(0, 16);
+  try {
+    const { rows } = await db.query("SELECT value FROM system_config WHERE key = 'kb_index_version'");
+    if (rows[0]?.value === version) return;
+    if (await rebuildIndex()) {
+      await db.query(
+        `INSERT INTO system_config (key, value) VALUES ('kb_index_version', $1)
+         ON CONFLICT (key) DO UPDATE SET value = $1, updated_at = NOW()`,
+        [version]
+      );
+    }
+  } catch (err) {
+    console.warn('[KB Index] Check failed:', err.message);
   }
 }

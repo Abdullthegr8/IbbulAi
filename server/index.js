@@ -17,10 +17,11 @@ import { errorHandler } from './middleware/errorHandler.js';
 import { initDB } from './database/init.js';
 import { loadConfig } from './services/configService.js';
 import { activeModel } from './providers/llm.js';
-import { rebuildIndex } from './services/kbIndex.js';
+import { rebuildIndex, ensureIndex } from './services/kbIndex.js';
 
 const app  = express();
 const PORT = process.env.PORT || 5000;
+const ON_VERCEL = Boolean(process.env.VERCEL);
 
 // ── Refuse to run in production with placeholder secrets ──────────
 if (process.env.NODE_ENV === 'production') {
@@ -40,6 +41,8 @@ if (process.env.NODE_ENV === 'production') {
 }
 
 // ── Security ──────────────────────────────────────────────────────
+// Vercel's proxy sets X-Forwarded-For; trust it so rate limits see the real client IP
+if (ON_VERCEL) app.set('trust proxy', 1);
 app.use(helmet());
 app.use(cors({
   origin: process.env.CLIENT_URL || 'http://localhost:3000',
@@ -58,6 +61,11 @@ app.use('/api/user/login', loginLimiter);
 app.use(morgan('dev'));
 app.use(express.json({ limit: '1mb' })); // file uploads use multipart, not JSON
 app.use(express.urlencoded({ extended: true }));
+
+// Every request waits for startup (DB tables, settings, search index) to finish
+app.use(async (req, res, next) => {
+  try { await init(); next(); } catch (err) { next(err); }
+});
 
 // ── Routes ────────────────────────────────────────────────────────
 app.use('/api/auth',      authRoutes);
@@ -82,18 +90,30 @@ app.use('/api', (req, res) => res.status(404).json({ error: 'Not found' }));
 app.use(errorHandler);
 
 // ── Start ─────────────────────────────────────────────────────────
-async function start() {
-  await initDB();
-  await loadConfig(); // Load settings from system_config table into memory
-  await rebuildIndex(); // Knowledge base search index (kb_chunks)
-  app.listen(PORT, () => {
-    console.log(`\n🚀 IbbulAI server running on port ${PORT}`);
-    console.log(`   LLM  : ${activeModel()}`);
-    console.log(`   Env  : ${process.env.NODE_ENV || 'development'}\n`);
-  });
+// Runs once per process. On Vercel each instance starts cold, so the full
+// index rebuild only runs when the built-in entries have changed.
+let _init;
+function init() {
+  _init ??= (async () => {
+    await initDB();
+    await loadConfig(); // Load settings from system_config table into memory
+    await (ON_VERCEL ? ensureIndex() : rebuildIndex()); // Knowledge base search index (kb_chunks)
+  })().catch(err => { _init = null; throw err; });
+  return _init;
 }
 
-start().catch(err => {
-  console.error('[Server] Failed to start:', err);
-  process.exit(1);
-});
+// Vercel imports the app from api/index.js and handles requests itself
+export default app;
+
+if (!ON_VERCEL) {
+  init().then(() => {
+    app.listen(PORT, () => {
+      console.log(`\n🚀 IbbulAI server running on port ${PORT}`);
+      console.log(`   LLM  : ${activeModel()}`);
+      console.log(`   Env  : ${process.env.NODE_ENV || 'development'}\n`);
+    });
+  }).catch(err => {
+    console.error('[Server] Failed to start:', err);
+    process.exit(1);
+  });
+}

@@ -153,6 +153,23 @@ ALTER TABLE chat_logs ADD COLUMN IF NOT EXISTS user_id UUID REFERENCES users(id)
 
 ---
 
+## Deploying to Vercel
+
+The repo deploys as one Vercel project: the React app is served as a static site and the Express server runs as a serverless function under `/api` (`api/index.js`, configured in `vercel.json`).
+
+1. Import the GitHub repo in Vercel (**Add New → Project**). Leave the framework as **Other** and the root directory as `./` — build settings come from `vercel.json`.
+2. Add the environment variables from `server/.env`, with these differences:
+   - `NODE_ENV=production`, and a strong `JWT_SECRET` and `ADMIN_PASSWORD`
+   - `DATABASE_URL` — Supabase **Transaction pooler** string (port 6543), with `DB_POOL_MAX=3`
+   - `DB_SSL_CA` — paste the certificate text itself (there's no file to point at)
+   - `CLOUDINARY_*` — required; Vercel's disk is temporary, so local uploads would be lost
+   - `CLIENT_URL` — your Vercel URL; leave out `PORT`
+3. Deploy, then check `https://<your-app>.vercel.app/api/health`.
+
+On Vercel, uploads are capped at 4 MB (Vercel rejects request bodies over 4.5 MB), and the search index is rebuilt only when the built-in entries change rather than on every start.
+
+---
+
 ## Project Structure
 
 ```

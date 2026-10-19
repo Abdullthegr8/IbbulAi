@@ -38,6 +38,8 @@ api.interceptors.response.use(undefined, err => {
 
 /** Server error message from an axios error, for toasts and forms. */
 export function errorMessage(err: unknown, fallback = 'Something went wrong. Please try again.'): string {
+  // Rejected by the host before reaching the server (Vercel allows 4.5 MB per request)
+  if ((err as { response?: { status?: number } })?.response?.status === 413) return 'File is too large'
   const data = (err as { response?: { data?: { error?: string } } })?.response?.data
   return data?.error || fallback
 }

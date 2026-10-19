@@ -8,13 +8,20 @@ const LOCAL_HOST_RE = /@(localhost|127\.0\.0\.1|\[::1\])(:\d+)?\//;
  * SSL for hosted databases (e.g. Supabase); off for a local database.
  * DB_SSL=true|false overrides the automatic choice. Certificates are verified —
  * for Supabase, download the project's CA certificate (Dashboard → Database
- * settings → SSL configuration) and point DB_SSL_CA at it.
+ * settings → SSL configuration) and set DB_SSL_CA to its path, or to the
+ * certificate text itself (for hosts like Vercel that only have env variables).
  */
+function readCA(value) {
+  if (!value) return undefined;
+  if (value.includes('BEGIN CERTIFICATE')) return value.replace(/\\n/g, '\n');
+  return fs.readFileSync(value, 'utf8');
+}
+
 function sslConfig(url) {
   const mode = process.env.DB_SSL;
   if (mode === 'false' || (mode !== 'true' && LOCAL_HOST_RE.test(url))) return false;
   return {
-    ca: process.env.DB_SSL_CA ? fs.readFileSync(process.env.DB_SSL_CA, 'utf8') : undefined,
+    ca: readCA(process.env.DB_SSL_CA),
     rejectUnauthorized: process.env.DB_SSL_REJECT_UNAUTHORIZED !== 'false',
   };
 }

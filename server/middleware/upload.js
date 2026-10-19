@@ -12,10 +12,12 @@ export const ALLOWED_MIMETYPES = {
 
 /**
  * Single-file upload held in memory. The size limit is read per request so
- * the admin "Max Upload Size" setting applies without a restart.
+ * the admin "Max Upload Size" setting applies without a restart. Vercel
+ * rejects request bodies over 4.5 MB, so uploads are capped at 4 MB there.
  */
 export function uploadSingle(req, res, next) {
-  const maxMb = Number(getConfig('max_file_size_mb')) || 50;
+  let maxMb = Number(getConfig('max_file_size_mb')) || 50;
+  if (process.env.VERCEL) maxMb = Math.min(maxMb, 4);
   multer({
     storage: multer.memoryStorage(),
     limits:  { fileSize: maxMb * 1024 * 1024, files: 1 },

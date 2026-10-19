@@ -9,6 +9,7 @@ All notable changes to IbbulAI are documented here.
 ### Added
 - **RAG retrieval rebuilt** — all sources are split into passages and indexed in `kb_chunks` (weighted PostgreSQL full-text search, GIN index) when they're written instead of being scanned on every question; rarity-weighted ranking with a relevance gate; follow-up questions are searched with the previous question's context
 - **Citations** — answers cite numbered sources (`[1]`), shown as source chips under each answer (documents link to their download) and saved in `chat_logs.sources`
+- **Vercel deployment** — `vercel.json` and `api/index.js` run the client and server as one Vercel project; `DB_SSL_CA` accepts the certificate text as well as a file path; uploads are capped at 4 MB on Vercel
 
 ### Changed
 - **Claude-style layout** — one collapsible sidebar for every role (student, staff, admin, guest) with New chat, navigation, date-grouped chat history and an account menu; collapses to an icon rail on desktop and becomes a drawer on mobile
