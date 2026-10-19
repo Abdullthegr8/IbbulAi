@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Search, FileText, FileImage, Download, Eye, Loader2 } from 'lucide-react'
+import { useNavigate } from 'react-router-dom'
+import { Search, FileText, FileImage, Download, Eye, Loader2, MessageSquareText } from 'lucide-react'
 import { format } from 'date-fns'
 import { getDocuments, getDownloadUrl, errorMessage } from '../services/api'
 import type { Document } from '../services/api'
@@ -14,6 +15,7 @@ function formatSize(bytes: number): string {
 const PREVIEWABLE = new Set(['application/pdf', 'text/plain', 'image/png', 'image/jpeg'])
 
 export default function DocumentsPage() {
+  const navigate = useNavigate()
   const [docs,     setDocs]     = useState<Document[]>([])
   const [loading,  setLoading]  = useState(true)
   const [error,    setError]    = useState('')
@@ -87,6 +89,14 @@ export default function DocumentsPage() {
                          className="p-2 rounded-lg text-gray-400 hover:text-gray-700 hover:bg-gray-100 transition-colors">
                         <Eye size={15} />
                       </a>
+                    )}
+                    {d.searchable && (
+                      <button onClick={() => navigate('/chat', { state: { doc: { id: d.id, name: d.name } } })}
+                              title="Ask IbbulAI about this document" aria-label={`Ask about ${d.name}`}
+                              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[12px] font-semibold text-white transition-opacity hover:opacity-90"
+                              style={{ background: '#1A6B1A' }}>
+                        <MessageSquareText size={13} /> <span className="hidden sm:inline">Ask</span>
+                      </button>
                     )}
                     <a href={url} download title="Download" aria-label={`Download ${d.name}`}
                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-[12px] font-semibold transition-colors hover:bg-[#e8f5e8]"

@@ -1,6 +1,10 @@
+import { useEffect, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
-import { MessageCircle, Files, GraduationCap, Wallet, ClipboardList, BedDouble, CalendarDays, ScrollText, ArrowRight } from 'lucide-react'
+import { MessageCircle, Files, GraduationCap, Wallet, ClipboardList, BedDouble, CalendarDays, ScrollText, ArrowRight, Megaphone, Pin } from 'lucide-react'
+import { format } from 'date-fns'
 import { useAuth } from '../hooks/useAuth'
+import { getAnnouncements } from '../services/api'
+import type { Announcement } from '../types'
 
 const topics = [
   { icon: GraduationCap, label: 'Admission requirements', q: 'What are the admission requirements for IBBU?' },
@@ -14,6 +18,11 @@ const topics = [
 export default function HomePage() {
   const { user } = useAuth()
   const navigate = useNavigate()
+  const [announcements, setAnnouncements] = useState<Announcement[]>([])
+
+  useEffect(() => {
+    getAnnouncements().then(setAnnouncements).catch(() => {})
+  }, [])
 
   return (
     <div className="flex-1 overflow-y-auto scrollbar-thin bg-[#f5f5f5] animate-fadeIn">
@@ -34,6 +43,27 @@ export default function HomePage() {
             </Link>
           </div>
         </section>
+
+        {announcements.length > 0 && (
+          <section>
+            <h2 className="font-display font-semibold text-[15px] text-gray-800 mb-3 flex items-center gap-2">
+              <Megaphone size={16} style={{ color: '#1A6B1A' }} /> Announcements
+            </h2>
+            <div className="bg-white rounded-xl border border-gray-200 shadow-sm divide-y divide-gray-100">
+              {announcements.slice(0, 5).map(a => (
+                <article key={a.id} className="px-4 py-3">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    {a.pinned && <Pin size={12} style={{ color: '#1A6B1A' }} aria-label="Pinned" />}
+                    <h3 className="text-sm font-semibold text-gray-800">{a.title}</h3>
+                    <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold" style={{ background: '#e8f5e8', color: '#1A6B1A' }}>{a.category}</span>
+                    <span className="text-[11px] text-gray-400 ml-auto">{format(new Date(a.created_at), 'MMM d, yyyy')}</span>
+                  </div>
+                  <p className="text-[13px] text-gray-600 mt-1 whitespace-pre-line">{a.body}</p>
+                </article>
+              ))}
+            </div>
+          </section>
+        )}
 
         <section>
           <h2 className="font-display font-semibold text-[15px] text-gray-800 mb-3">Popular topics</h2>

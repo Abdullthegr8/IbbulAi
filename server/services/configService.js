@@ -11,10 +11,6 @@ let _cache = {};
 let _cacheLoaded = false;
 
 const DEFAULTS = {
-  llm_provider:       process.env.LLM_PROVIDER       || 'groq',
-  groq_model:         process.env.GROQ_MODEL         || 'qwen/qwen3-32b',
-  openai_model:       process.env.OPENAI_MODEL        || 'gpt-4o',
-  anthropic_model:    process.env.ANTHROPIC_MODEL     || 'claude-sonnet-4-6',
   web_search_enabled: process.env.WEB_SEARCH_ENABLED  || 'false',
   rag_top_k:          process.env.RAG_TOP_K           || '5',
   max_file_size_mb:   process.env.MAX_FILE_SIZE_MB    || '50',

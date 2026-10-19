@@ -11,9 +11,13 @@ import documentRoutes from './routes/documents.js';
 import authRoutes     from './routes/auth.js';
 import userAuthRoutes from './routes/userAuth.js';
 import adminRoutes    from './routes/admin.js';
+import conversationRoutes from './routes/conversations.js';
+import announcementRoutes from './routes/announcements.js';
 import { errorHandler } from './middleware/errorHandler.js';
 import { initDB } from './database/init.js';
-import { loadConfig, getConfig } from './services/configService.js';
+import { loadConfig } from './services/configService.js';
+import { activeModel } from './providers/llm.js';
+import { rebuildIndex } from './services/kbIndex.js';
 
 const app  = express();
 const PORT = process.env.PORT || 5000;
@@ -61,13 +65,15 @@ app.use('/api/user',      userAuthRoutes);
 app.use('/api/chat',      chatRoutes);
 app.use('/api/documents', documentRoutes);
 app.use('/api/admin',     adminRoutes);
+app.use('/api/conversations', conversationRoutes);
+app.use('/api/announcements', announcementRoutes);
 
 app.get('/api/health', (req, res) => {
   res.json({
     status:    'ok',
     app:       'IbbulAI',
-    provider:  getConfig('llm_provider') || 'groq',
-    model:     getConfig('groq_model')   || 'qwen/qwen3-32b',
+    provider:  'groq',
+    model:     activeModel(),
     timestamp: new Date().toISOString(),
   });
 });
@@ -79,9 +85,10 @@ app.use(errorHandler);
 async function start() {
   await initDB();
   await loadConfig(); // Load settings from system_config table into memory
+  await rebuildIndex(); // Knowledge base search index (kb_chunks)
   app.listen(PORT, () => {
     console.log(`\n🚀 IbbulAI server running on port ${PORT}`);
-    console.log(`   LLM  : ${getConfig('groq_model') || 'qwen/qwen3-32b'}`);
+    console.log(`   LLM  : ${activeModel()}`);
     console.log(`   Env  : ${process.env.NODE_ENV || 'development'}\n`);
   });
 }

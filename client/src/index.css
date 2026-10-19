@@ -23,3 +23,11 @@ body {
 
 .chat-prose strong { font-weight: 600; color: #1a1a1a; }
 .chat-prose > :first-child { margin-top: 0; }
+
+/* Citation markers in answers, e.g. [2] */
+.chat-prose sup.cite {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-width: 16px; height: 16px; padding: 0 4px; margin-left: 2px;
+  border-radius: 999px; background: #e8f5e8; color: #1A6B1A;
+  font-size: 10px; font-weight: 600; line-height: 1; vertical-align: 2px;
+}

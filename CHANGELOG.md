@@ -4,6 +4,45 @@ All notable changes to IbbulAI are documented here.
 
 ---
 
+## [1.8.0] — 2026
+
+### Added
+- **RAG retrieval rebuilt** — all sources are split into passages and indexed in `kb_chunks` (weighted PostgreSQL full-text search, GIN index) when they're written instead of being scanned on every question; rarity-weighted ranking with a relevance gate; follow-up questions are searched with the previous question's context
+- **Citations** — answers cite numbered sources (`[1]`), shown as source chips under each answer (documents link to their download) and saved in `chat_logs.sources`
+
+### Changed
+- **Claude-style layout** — one collapsible sidebar for every role (student, staff, admin, guest) with New chat, navigation, date-grouped chat history and an account menu; collapses to an icon rail on desktop and becomes a drawer on mobile
+- **Chat** — centred greeting and composer on a new chat, soft user bubbles, always-visible copy / feedback actions (work on touch screens), larger reading text, safe-area padding on phones
+- **Admin chats are saved** — the admin gets a `users` row on login, so admin conversations appear in history like everyone else's
+
+### Removed
+- **Model switching** — the LLM provider / model settings are gone from the dashboard and API; the model is fixed by `GROQ_MODEL` in `server/.env`
+
+### Fixed
+- Visiting `/admin` while signed out now goes to the admin sign-in (it went to the staff sign-in, which rejects admin credentials)
+
+---
+
+## [1.7.0] — 2026
+
+### Added
+- **Streaming replies** — answers appear word by word (`POST /api/chat/stream`, server-sent events), with a Stop button that also stops generation on the server
+- **Saved conversations** — students and staff get a history sidebar (drawer on mobile); each conversation has its own URL (`/chat/:id`) and continues with server-side history
+- **Answer feedback** — thumbs up / down under each answer, stored on the chat log
+- **"I don't know" handling** — when the knowledge base has no answer, IbbulAI says so, points to the right university office, and flags the question as unanswered
+- **Ask about a document** — "Ask" on the Documents page starts a chat answered only from that document
+- **Announcements** — staff post notices (optional pin and expiry); shown on Home and above the chat, and searched by the bot ahead of older information
+- **Inbox** (staff + admin) — unanswered and thumbs-down questions, grouped; add the answer to the knowledge base in one step, or dismiss
+- **Analytics** (admin) — questions per day, busiest hours, top topics, user types, verified-answer rate, helpful rate, response time
+- Chat Logs show "No verified answer" / "Helpful" / "Not helpful" badges
+
+### Changed
+- Default model is now `qwen/qwen3.8-27b`; admin model list is Qwen3.8 27B, GPT-OSS 120B and GPT-OSS 20B (Groq retired `qwen/qwen3-32b`, `llama-3.1-8b-instant` and `compound-beta`)
+- Chat history for signed-in users is stored in PostgreSQL instead of browser storage
+- New tables `conversations` and `announcements`; new `chat_logs` columns (created automatically on startup)
+
+---
+
 ## [1.6.0] — 2026
 
 ### Added

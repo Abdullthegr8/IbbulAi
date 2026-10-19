@@ -78,6 +78,12 @@ export default function UserAuthForm({ role, mode }: Props) {
                 className="text-xs text-gray-400 hover:text-gray-600">
             {isStudent ? 'Are you a staff member?' : 'Are you a student?'}
           </Link>
+          {!isStudent && !isRegister && (
+            <>
+              <span className="text-xs text-gray-300 mx-2">·</span>
+              <Link to="/admin/login" className="text-xs text-gray-400 hover:text-gray-600">Administrator?</Link>
+            </>
+          )}
         </div>
       </>}
     >

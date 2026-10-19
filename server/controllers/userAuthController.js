@@ -4,6 +4,7 @@ import { signToken } from '../middleware/auth.js';
 
 // IBBU matric number, e.g. U22/FNS/MCB/1000
 export const MATRIC_RE = /^U\d{2}\/[A-Z]{2,5}\/[A-Z]{2,5}\/\d{3,5}$/;
+const UUID_RE  = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 // Compared against when an account doesn't exist, so timing doesn't reveal valid accounts
 const DUMMY_HASH = bcrypt.hashSync('not-a-real-password', 10);
@@ -89,7 +90,7 @@ export async function login(req, res) {
 }
 
 export async function me(req, res) {
-  if (req.user.role === 'admin') {
+  if (req.user.role === 'admin' && !UUID_RE.test(String(req.user.id))) {
     return res.json({ user: { id: req.user.id, name: req.user.name, role: 'admin', identifier: req.user.identifier } });
   }
   const result = await db.query('SELECT id, identifier, name, role FROM users WHERE id = $1', [req.user.id]);

@@ -11,9 +11,12 @@ import {
 import type { AdminStats, ChatLog, TopQuestion, KBEntry } from '../types'
 import type { Document, SystemSettings } from '../services/api'
 import { useAuth } from '../hooks/useAuth'
+import AnalyticsTab from '../components/admin/AnalyticsTab'
+import InboxTab from '../components/admin/InboxTab'
+import AnnouncementsTab from '../components/admin/AnnouncementsTab'
 
-type AdminTab = 'overview' | 'logs' | 'documents' | 'knowledge' | 'settings'
-type StaffTab = 'documents' | 'knowledge'
+type AdminTab = 'overview' | 'analytics' | 'inbox' | 'logs' | 'documents' | 'knowledge' | 'announcements' | 'settings'
+type StaffTab = 'inbox' | 'documents' | 'knowledge' | 'announcements'
 
 const GREEN       = '#1A6B1A'
 const GREEN_LIGHT = '#e8f5e8'
@@ -38,7 +41,7 @@ export default function AdminPage() {
   const isStaff   = user?.role === 'staff'
   const navigate  = useNavigate()
 
-  const [tab,        setTab]        = useState<AdminTab | StaffTab>(isStaff ? 'documents' : 'overview')
+  const [tab,        setTab]        = useState<AdminTab | StaffTab>(isStaff ? 'inbox' : 'overview')
   const [stats,      setStats]      = useState<AdminStats | null>(null)
   const [logs,       setLogs]       = useState<ChatLog[]>([])
   const [topQ,       setTopQ]       = useState<TopQuestion[]>([])
@@ -55,7 +58,7 @@ export default function AdminPage() {
   const [savingSettings, setSavingSettings] = useState(false)
 
   useEffect(() => {
-    if (!isLoggedIn) { navigate('/staff/login'); return }
+    if (!isLoggedIn) { navigate('/admin/login', { replace: true }); return }
     if (!isAdmin && !isStaff) { navigate('/chat'); return }
     loadData()
   }, [isLoggedIn, isAdmin, isStaff]) // eslint-disable-line
@@ -139,15 +142,20 @@ export default function AdminPage() {
   }
 
   const adminTabs: { key: AdminTab; label: string }[] = [
-    { key: 'overview',  label: 'Overview' },
-    { key: 'logs',      label: 'Chat Logs' },
-    { key: 'documents', label: 'Documents' },
-    { key: 'knowledge', label: 'Knowledge Base' },
-    { key: 'settings',  label: 'Settings' },
+    { key: 'overview',      label: 'Overview' },
+    { key: 'analytics',     label: 'Analytics' },
+    { key: 'inbox',         label: 'Inbox' },
+    { key: 'logs',          label: 'Chat Logs' },
+    { key: 'documents',     label: 'Documents' },
+    { key: 'knowledge',     label: 'Knowledge Base' },
+    { key: 'announcements', label: 'Announcements' },
+    { key: 'settings',      label: 'Settings' },
   ]
   const staffTabs: { key: StaffTab; label: string }[] = [
-    { key: 'documents', label: 'Documents' },
-    { key: 'knowledge', label: 'Knowledge Base' },
+    { key: 'inbox',         label: 'Inbox' },
+    { key: 'documents',     label: 'Documents' },
+    { key: 'knowledge',     label: 'Knowledge Base' },
+    { key: 'announcements', label: 'Announcements' },
   ]
   const tabs = isAdmin ? adminTabs : staffTabs
   // Postgres COUNT(*) arrives as a string, hence Number()
@@ -174,7 +182,7 @@ export default function AdminPage() {
           </span>
         </div>
         <p className="text-sm text-gray-500">
-          {isAdmin ? 'Manage IbbulAI — documents, knowledge base, settings, and usage analytics' : 'Manage documents and knowledge base'}
+          {isAdmin ? 'Manage IbbulAI — documents, knowledge base, settings, and usage analytics' : 'Answer open questions and manage documents, knowledge base and announcements'}
         </p>
         <div className="flex gap-0 mt-4 overflow-x-auto scrollbar-thin -mb-px">
           {tabs.map(t => (
@@ -235,6 +243,12 @@ export default function AdminPage() {
           </div>
         )}
 
+        {tab === 'analytics' && isAdmin && <AnalyticsTab />}
+
+        {tab === 'inbox' && <InboxTab onKBAdded={() => getKnowledgeBase().then(setKb).catch(() => {})} />}
+
+        {tab === 'announcements' && <AnnouncementsTab />}
+
         {/* ── Chat Logs ── */}
         {tab === 'logs' && isAdmin && (
           <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
@@ -253,7 +267,16 @@ export default function AdminPage() {
                 <tbody>
                   {logs.map(l => (
                     <tr key={l.id} className="border-b border-gray-100 hover:bg-gray-50 transition-colors">
-                      <td className="px-4 py-3 max-w-[200px] truncate text-gray-800">{l.question}</td>
+                      <td className="px-4 py-3 max-w-[240px] text-gray-800">
+                        <span className="block truncate">{l.question}</span>
+                        {(l.unanswered || l.feedback) && (
+                          <span className="flex gap-1 mt-0.5">
+                            {l.unanswered && <span className="px-1.5 rounded text-[10px] font-semibold" style={{ background: '#fff4dc', color: '#8a5a00' }}>No verified answer</span>}
+                            {l.feedback === 1  && <span className="px-1.5 rounded text-[10px] font-semibold" style={{ background: GREEN_LIGHT, color: GREEN }}>Helpful</span>}
+                            {l.feedback === -1 && <span className="px-1.5 rounded text-[10px] font-semibold" style={{ background: '#fdecec', color: '#b91c1c' }}>Not helpful</span>}
+                          </span>
+                        )}
+                      </td>
                       <td className="px-4 py-3 text-[12px] text-gray-500 max-w-[140px] truncate">{l.source || '—'}</td>
                       <td className="px-4 py-3">
                         <span className="px-2 py-0.5 rounded-full text-xs font-semibold" style={{ background: GREEN_LIGHT, color: GREEN }}>
@@ -280,7 +303,7 @@ export default function AdminPage() {
                 style={{ borderColor: uploading ? '#ccc' : GREEN_MID }}>
                 {uploading ? <Loader2 size={28} className="animate-spin" style={{ color: GREEN }} /> : <Upload size={28} className="text-gray-400" />}
                 <p className="text-sm text-gray-600 text-center px-4">
-                  {uploading ? 'Uploading and embedding…' : <><span className="font-semibold" style={{ color: GREEN }}>Click to upload</span> or drag and drop</>}
+                  {uploading ? 'Uploading and indexing…' : <><span className="font-semibold" style={{ color: GREEN }}>Click to upload</span> or drag and drop</>}
                 </p>
                 <p className="text-[11px] text-gray-400">PDF, DOCX, images · Max 50MB</p>
                 <input type="file" className="hidden" accept=".pdf,.docx,.doc,.txt,.png,.jpg" onChange={handleUpload} />
@@ -373,38 +396,6 @@ export default function AdminPage() {
               <p className="text-[12px] text-gray-400 mt-0.5">Changes are saved to the database and applied immediately — no server restart needed.</p>
             </div>
             <div className="divide-y divide-gray-100">
-
-              {/* LLM Provider */}
-              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 px-4 py-4">
-                <div>
-                  <p className="text-sm font-medium text-gray-800">LLM Provider</p>
-                  <p className="text-[12px] text-gray-400 mt-0.5">The AI provider powering IbbulAI</p>
-                </div>
-                <select
-                  value={settingsForm.llm_provider || 'groq'}
-                  onChange={e => setSettingsForm(s => ({ ...s, llm_provider: e.target.value }))}
-                  className="px-3 py-1.5 rounded-lg border border-gray-200 text-sm outline-none bg-gray-50 text-gray-700 w-full sm:w-auto focus:border-[#1A6B1A]">
-                  <option value="groq">Groq</option>
-                  <option value="openai" disabled>OpenAI (not yet available)</option>
-                  <option value="claude" disabled>Anthropic Claude (not yet available)</option>
-                </select>
-              </div>
-
-              {/* Groq Model */}
-              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 px-4 py-4">
-                <div>
-                  <p className="text-sm font-medium text-gray-800">Groq Model</p>
-                  <p className="text-[12px] text-gray-400 mt-0.5">Currently active: <span className="font-mono text-[11px]">{settings?.groq_model}</span></p>
-                </div>
-                <select
-                  value={settingsForm.groq_model || 'qwen/qwen3-32b'}
-                  onChange={e => setSettingsForm(s => ({ ...s, groq_model: e.target.value }))}
-                  className="px-3 py-1.5 rounded-lg border border-gray-200 text-sm outline-none bg-gray-50 text-gray-700 w-full sm:w-auto focus:border-[#1A6B1A]">
-                  <option value="qwen/qwen3-32b">Qwen3 32B (recommended)</option>
-                  <option value="llama-3.1-8b-instant">Llama 3.1 8B (fastest)</option>
-                  <option value="compound-beta">Compound Beta</option>
-                </select>
-              </div>
 
               {/* Web Search */}
               <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 px-4 py-4">

@@ -1,118 +1,21 @@
 /**
- * Knowledge base search.
+ * Knowledge base search (retrieval for RAG).
  *
- * Sources, searched together and ranked by keyword overlap:
- *   1. LOCAL_KB — 16 built-in IBBU entries (below)
- *   2. knowledge_base table — entries added from the admin / staff panel
- *   3. documents table — text extracted from uploaded documents
+ * searchKnowledgeBase() runs a weighted full-text search over kb_chunks —
+ * passages from the built-in entries, the knowledge_base table, uploaded
+ * documents and current announcements (see kbIndex.js) — and returns the best
+ * sources, numbered for citation. A passage is only used when it matches
+ * enough of the question's terms, so weak matches fall through to the honest
+ * "no verified answer" path instead of giving the model loosely related text.
  *
- * NOTE: The built-in entries are deliberately general. They avoid specific
- * fees, cut-off marks and dates, which change every session — have the
- * relevant offices verify and extend them (via the Knowledge Base tab)
- * before relying on them.
+ * searchDocument() instead searches inside a single document, for
+ * "ask about this document" conversations.
  */
 
 import { db } from '../database/init.js';
 import { getConfig } from './configService.js';
+import { LOCAL_KB } from './localKB.js';
 
-const LOCAL_KB = [
-  {
-    topic: 'Admission requirements', source: 'IBBU Admissions Guide',
-    keywords: ['admission', 'admit', 'requirements', 'jamb', 'utme', 'post-utme', 'screening', 'apply', 'application', 'olevel', "o'level", 'waec', 'neco', 'direct', 'entry'],
-    answer: `Undergraduate admission to IBBU is through JAMB (UTME or Direct Entry). Candidates generally need:
-- Five O'Level credits (WAEC, NECO or NABTEB) including English Language and Mathematics, in not more than two sittings, with subjects relevant to the chosen programme
-- An acceptable UTME score and IBBU listed as the institution of choice on JAMB CAPS
-- Participation in the IBBU Post-UTME / screening exercise when announced
-Direct Entry candidates use qualifying A'Level, ND, NCE or equivalent results. Cut-off marks and subject combinations vary by programme and session — confirm on the official IBBU website or with the Admissions Office.`,
-  },
-  {
-    topic: 'School fees', source: 'Bursary Department',
-    keywords: ['fee', 'fees', 'school', 'tuition', 'payment', 'pay', 'bursary', 'invoice', 'remita', 'charges', 'amount', 'cost'],
-    answer: `School fees are paid online. Generate a payment invoice from the student portal, then pay through the approved payment channel shown on the invoice (bank or online payment). Keep your receipt — it is required for course registration and clearance. Fee amounts differ by programme, level and student category (e.g. indigene / non-indigene) and are reviewed each session, so check the current fee schedule on the portal or with the Bursary Department.`,
-  },
-  {
-    topic: 'Course registration', source: 'Academic Affairs',
-    keywords: ['course', 'courses', 'registration', 'register', 'units', 'credit', 'semester', 'form', 'add', 'drop', 'carryover'],
-    answer: `Course registration is done each semester on the student portal after fees are paid:
-1. Log in to the student portal with your matric number
-2. Open course registration and select your core, elective and any carry-over courses
-3. Stay within the unit limits set by your department
-4. Submit, print the course form and get it signed by your level adviser / HOD as required
-Registration closes on a date announced by Academic Affairs — late registration may attract a penalty or not be allowed.`,
-  },
-  {
-    topic: 'Examinations', source: 'Examination Unit',
-    keywords: ['exam', 'exams', 'examination', 'timetable', 'test', 'result', 'results', 'grade', 'gpa', 'cgpa', 'malpractice', 'missed'],
-    answer: `Examination timetables are published by the Examination Unit / your faculty before each exam period. To sit an exam you must have registered the course and meet attendance requirements. Bring your ID card and exam card; phones and unauthorised materials are not allowed — examination malpractice attracts serious sanctions. Results are released through the student portal after approval by Senate. If you miss an exam for a genuine reason (e.g. illness), report to your department immediately with documentary evidence.`,
-  },
-  {
-    topic: 'Hostel accommodation', source: 'Student Affairs',
-    keywords: ['hostel', 'accommodation', 'room', 'bedspace', 'housing', 'lodge', 'stay', 'campus', 'residence'],
-    answer: `On-campus hostel spaces are limited and allocated by the Student Affairs Division, usually through the student portal at the start of the session, after school fees are paid. Allocation is often first-come, first-served with priority rules set by Student Affairs. Many students live off-campus in Lapai town. Check the portal and Student Affairs notices for the current application window and hostel charges.`,
-  },
-  {
-    topic: 'Transcript', source: 'Registrar Office',
-    keywords: ['transcript', 'transcripts', 'academic', 'record', 'statement', 'result'],
-    answer: `Transcripts are processed by the Registry (Academic Office). Apply through the official transcript application channel, pay the transcript fee, and provide the destination address (institution or email). Processing time depends on verification of your records — apply early if you have a deadline. Contact the Registrar's Office for current fees and delivery options.`,
-  },
-  {
-    topic: 'Scholarships', source: 'Student Affairs',
-    keywords: ['scholarship', 'scholarships', 'bursary', 'grant', 'financial', 'aid', 'sponsorship', 'award'],
-    answer: `Scholarship and bursary opportunities for IBBU students may come from the Niger State Government, federal agencies, corporate bodies and NGOs. Announcements are made through Student Affairs and official university notices. Typical requirements include good academic standing, a valid matric number and proof of registration. Beware of anyone asking you to pay for a "scholarship". Contact Student Affairs for current opportunities.`,
-  },
-  {
-    topic: 'Clearance documents', source: 'Admissions Office',
-    keywords: ['clearance', 'documents', 'acceptance', 'screening', 'verification', 'fresher', 'freshers', 'new', 'student'],
-    answer: `Newly admitted students complete clearance before registration. Commonly required documents include:
-- JAMB admission letter and UTME / Direct Entry result slip
-- O'Level result(s) and the scratch cards for online verification
-- Birth certificate or declaration of age
-- Certificate / letter of state and local government of origin
-- Passport photographs
-- Acceptance fee payment receipt
-Bring originals and photocopies. Confirm the current list with the Admissions Office, as requirements can change.`,
-  },
-  {
-    topic: 'Student portal', source: 'ICT Centre',
-    keywords: ['portal', 'login', 'password', 'account', 'matric', 'online', 'website', 'reset'],
-    answer: `The student portal is used for fee invoices, course registration, hostel applications and results. Log in with your matric number (or application number before matriculation). If you forget your password, use the portal's reset option; if that fails, visit the ICT Centre with your ID card. Never share your portal password.`,
-  },
-  {
-    topic: 'Library', source: 'University Library',
-    keywords: ['library', 'books', 'borrow', 'reading', 'ebooks', 'journals', 'research', 'study'],
-    answer: `The University Library provides books, journals, reading spaces and access to electronic resources. Register with the library using your student ID to borrow materials. Borrowed items must be returned on time to avoid fines. Ask the library staff about e-library access, opening hours during exams, and help with research.`,
-  },
-  {
-    topic: 'ICT Centre', source: 'ICT Centre',
-    keywords: ['ict', 'internet', 'wifi', 'wi-fi', 'computer', 'email', 'network', 'technical', 'support'],
-    answer: `The ICT Centre manages the university's network, student portal and technical support. Visit the ICT Centre for portal access problems, account issues and campus internet access. Bring your student ID card when requesting support.`,
-  },
-  {
-    topic: 'Graduation', source: 'Academic Affairs',
-    keywords: ['graduation', 'graduate', 'convocation', 'certificate', 'final', 'degree', 'nysc', 'clearance', 'statement'],
-    answer: `To graduate you must pass all required courses and meet the minimum credit units for your programme, then complete final-year clearance (departments, library, bursary, student affairs, etc.). Graduating students are mobilised for NYSC through the university. Convocation dates are announced by the University; certificates are collected from the Registry after convocation, while a statement of result can be requested before then.`,
-  },
-  {
-    topic: 'Academic calendar', source: 'Academic Affairs',
-    keywords: ['calendar', 'session', 'semester', 'resumption', 'resume', 'holiday', 'break', 'dates', 'when'],
-    answer: `The academic session has two semesters (first and second). Resumption, registration deadlines, lecture periods, examinations and breaks are set in the academic calendar approved by Senate and published each session. Dates can change, so always check the current calendar on the official website or Academic Affairs notices.`,
-  },
-  {
-    topic: 'Faculties & departments', source: 'Academic Affairs',
-    keywords: ['faculty', 'faculties', 'department', 'departments', 'programme', 'programmes', 'program', 'courses', 'offered', 'study'],
-    answer: `IBBU runs undergraduate programmes across several faculties covering areas such as agriculture, arts, education, management and social sciences, and natural and applied sciences. Programmes and their accreditation status change over time — see the official IBBU website or Academic Affairs for the current list of faculties, departments and programmes.`,
-  },
-  {
-    topic: 'General university info', source: 'University Overview',
-    keywords: ['ibbu', 'university', 'about', 'history', 'location', 'where', 'lapai', 'founded', 'established', 'vice-chancellor', 'vc', 'contact'],
-    answer: `Ibrahim Badamasi Babangida University (IBBU) is a Niger State Government-owned university located in Lapai, Niger State, Nigeria. It was established in 2005 and is named after General Ibrahim Badamasi Babangida. For official announcements, contacts and leadership information, visit the university's official website.`,
-  },
-  {
-    topic: 'Postgraduate programmes', source: 'Postgraduate School',
-    keywords: ['postgraduate', 'pg', 'masters', 'msc', 'ma', 'phd', 'pgd', 'doctorate'],
-    answer: `Postgraduate programmes (such as PGD, Master's and PhD, where available) are administered by the Postgraduate School. Admission requires a relevant first degree with the required class of degree, transcripts and other documents specified in the application. Applications are made when the Postgraduate School advertises admission — check its notices for available programmes, requirements and deadlines.`,
-  },
-];
 
 const STOPWORDS = new Set(('a an the is are was were be been to of in on at for and or but how what when where which who why do does did can could i my me you your we our it its this that with from by as about please tell know get want need ibbu university').split(' '));
 
@@ -137,62 +40,211 @@ function score(queryTokens, words) {
   return s;
 }
 
-// Best ~800-char window of a document around the query terms
-function bestSnippet(content, queryTokens) {
-  const text = content.replace(/\s+/g, ' ');
-  if (text.length <= 800) return text;
-  const lower = text.toLowerCase();
-  const hit = queryTokens.map(t => lower.indexOf(t)).filter(i => i >= 0).sort((a, b) => a - b)[0] ?? 0;
-  const start = Math.max(0, hit - 200);
-  return (start > 0 ? '…' : '') + text.slice(start, start + 800) + '…';
+const MAX_TERMS  = 10;
+const PER_SOURCE = 2;  // passages per source, so one long document can't crowd out the rest
+const SOURCE_BONUS = { announcement: 0.15, kb: 0.1, document: 0, builtin: 0 };  // newest / curated first on ties
+const RELATIVE_CUTOFF = 0.6;  // keep passages scoring at least 60% of the best match
+const EMPTY = { sources: [], topic: null, foundInKB: false };
+
+// Question terms for full-text search: lowercase words, no stopwords
+function searchTerms(text) {
+  // "post-utme" → post, utme (Postgres splits hyphenated words the same way)
+  return [...new Set(tokenize(text).flatMap(t => t.split(/[^a-z0-9]+/)).filter(t => t.length > 1 && !STOPWORDS.has(t)))].slice(0, MAX_TERMS);
 }
 
-export async function searchLocalKB(query) {
-  const queryTokens = tokenize(query);
+// Longer words also match as a prefix of the stem: "register" finds "registration"
+const tsTerm = t => (t.length >= 5 ? `${t}:*` : t);
+
+// How many of the question's terms a passage must contain to count as relevant
+const minMatched = n => (n <= 2 ? 1 : Math.ceil(n * 0.4));
+
+async function rankPassages(terms) {
+  const params  = [terms.map(tsTerm).join(' | '), ...terms.map(tsTerm), ...terms.map(t => `${tsTerm(t)}A`)];
+  const each    = terms.map((_, i) => `to_tsquery('english', $${i + 2})`);
+  // Same terms, restricted to weight A (the source's title and keywords)
+  const inTitle = terms.map((_, i) => `to_tsquery('english', $${i + 2 + terms.length})`);
+  const byTerm  = terms.map((_, i) => `to_tsquery('english', $${i + 1})`);  // for the stats query's own parameters
+
+  const [passages, stats] = await Promise.all([
+    db.query(
+      `SELECT source_type, source_id, title, topic, url, heading, content, position, source_date,
+              ts_rank_cd(search, query, 32) AS rank,
+              ARRAY[${each.map(q => `search @@ ${q}`).join(', ')}] AS hits,
+              ARRAY[${inTitle.map(q => `search @@ ${q}`).join(', ')}] AS title_hits
+       FROM kb_chunks, to_tsquery('english', $1) AS query
+       WHERE search @@ query AND (expires_at IS NULL OR expires_at > NOW())
+       ORDER BY rank DESC
+       LIMIT 100`,
+      params
+    ),
+    // How many passages contain each term, for rarity weighting; `valid` is false
+    // for words Postgres treats as stopwords
+    db.query(
+      `SELECT COUNT(*)::int AS total,
+              ARRAY[${byTerm.map(q => `COUNT(*) FILTER (WHERE search @@ ${q})::int`).join(', ')}] AS df,
+              ARRAY[${byTerm.map(q => `numnode(${q}) > 0`).join(', ')}] AS valid
+       FROM kb_chunks`,
+      terms.map(tsTerm)
+    ),
+  ]);
+
+  // Rare words ("zorbatron", "transcript") say more about a match than common ones ("hours", "students")
+  const { total, df, valid } = stats.rows[0];
+  const idf = terms.map((_, i) => (valid[i] ? Math.log(1 + total / (1 + df[i])) : 0));
+  const idfSum = idf.reduce((a, b) => a + b, 0) || 1;
+  const n = valid.filter(Boolean).length || terms.length;
+  const weigh = flags => flags.reduce((sum, hit, i) => sum + (hit ? idf[i] : 0), 0) / idfSum;
+  const count = flags => flags.filter(Boolean).length;
+
+  const ranked = passages.rows
+    // Relevant if it covers enough of the question, or the question names the source's subject
+    .filter(r => count(r.hits) >= minMatched(n) || count(r.title_hits) >= Math.ceil(n / 3))
+    // Weighted coverage of the question, plus a boost when the terms are in the title —
+    // a passage *about* course registration beats one that merely mentions it
+    .map(r => ({ ...r, score: weigh(r.hits) + 0.75 * weigh(r.title_hits) + Number(r.rank) + SOURCE_BONUS[r.source_type] }))
+    .sort((a, b) => b.score - a.score);
+  // Drop passages far weaker than the best one — they add noise, not answers
+  const best = ranked[0]?.score ?? 0;
+  return ranked.filter(r => r.score >= best * RELATIVE_CUTOFF);
+}
+
+// Database unavailable: keyword-match the built-in entries in memory
+function rankBuiltinFallback(terms) {
+  return LOCAL_KB
+    .map((e, i) => ({
+      source_type: 'builtin', source_id: String(i), title: e.topic, topic: e.topic, url: null,
+      heading: e.source, content: e.answer, position: 0, source_date: null,
+      score: score(terms, [...e.keywords, ...tokenize(e.topic)]),
+    }))
+    .filter(r => r.score >= minMatched(terms.length))
+    .sort((a, b) => b.score - a.score);
+}
+
+/** Groups ranked passages into numbered sources, best first. */
+function toSources(passages) {
   const topK = Number(getConfig('rag_top_k')) || 5;
-  if (queryTokens.length === 0) return { chunks: [], sources: [], foundInKB: false };
+  const bySource = new Map();
+  let used = 0;
+  for (const p of passages) {
+    if (used >= topK) break;
+    const key = `${p.source_type}:${p.source_id}`;
+    let src = bySource.get(key);
+    if (!src) {
+      src = {
+        n: bySource.size + 1, type: p.source_type, id: p.source_id, title: p.title, topic: p.topic,
+        url: p.url, date: p.source_date, passages: [],
+      };
+      bySource.set(key, src);
+    }
+    if (src.passages.length >= PER_SOURCE) continue;
+    src.passages.push({ heading: p.heading, content: p.content, position: p.position });
+    used++;
+  }
+  const sources = [...bySource.values()];
+  for (const s of sources) s.passages.sort((a, b) => a.position - b.position);
+  return sources;
+}
 
-  const candidates = LOCAL_KB.map(e => ({
-    score:  score(queryTokens, [...e.keywords, ...tokenize(e.topic)]),
-    source: e.source,
-    chunk:  `### ${e.topic} (source: ${e.source})\n${e.answer}`,
-  }));
-
+async function search(terms) {
+  if (terms.length === 0) return EMPTY;
+  let passages;
   try {
-    const [kbRows, docRows] = await Promise.all([
-      db.query('SELECT question, answer, category FROM knowledge_base WHERE active = TRUE'),
-      db.query(`SELECT name, category, description, content FROM documents
-                WHERE content IS NOT NULL AND content <> ''`),
-    ]);
-    for (const r of kbRows.rows) {
-      candidates.push({
-        // Admin-curated entries rank slightly above built-in ones on ties
-        score:  score(queryTokens, tokenize(`${r.question} ${r.category}`)) + 0.5,
-        source: `Knowledge Base — ${r.category}`,
-        chunk:  `### ${r.question} (source: IBBU Knowledge Base)\n${r.answer}`,
-      });
-    }
-    for (const d of docRows.rows) {
-      const s = score(queryTokens, tokenize(`${d.name} ${d.description} ${d.category}`)) +
-                score(queryTokens, tokenize(d.content.slice(0, 20000))) * 0.5;
-      candidates.push({
-        score:  s,
-        source: `Document — ${d.name}`,
-        chunk:  `### From document "${d.name}"\n${bestSnippet(d.content, queryTokens)}`,
-      });
-    }
-  } catch {
-    // Database unavailable — fall back to the built-in entries only
+    passages = await rankPassages(terms);
+  } catch (err) {
+    console.warn('[RAG] Search failed, using built-in entries only:', err.message);
+    passages = rankBuiltinFallback(terms);
+  }
+  const sources = toSources(passages);
+  return sources.length ? { sources, topic: sources[0].topic, foundInKB: true } : EMPTY;
+}
+
+/**
+ * Finds the knowledge base sources for a question. Follow-ups ("what about
+ * direct entry?") don't say what they're about, so when the question is short
+ * or finds nothing, the previous question's terms are added and the search
+ * runs again — no extra LLM call needed.
+ */
+export async function searchKnowledgeBase(question, { previousQuestion } = {}) {
+  const terms = searchTerms(question);
+  let result = await search(terms);
+  if (previousQuestion && (!result.foundInKB || terms.length <= 3)) {
+    // Current terms first, so they survive the MAX_TERMS cut
+    const withContext = await search(searchTerms(`${question} ${previousQuestion}`));
+    if (withContext.foundInKB) result = withContext;
+  }
+  return result;
+}
+
+/** Context block for the model: each source with its citation number. */
+export function formatContext(sources) {
+  return sources.map(s => {
+    const label =
+      s.type === 'announcement' ? `ANNOUNCEMENT: ${s.title}${s.date ? ` (posted ${new Date(s.date).toISOString().slice(0, 10)})` : ''}` :
+      s.type === 'document'     ? `Document "${s.title}"` :
+      s.type === 'kb'           ? `IBBU Knowledge Base — ${s.title}` :
+                                  `${s.title} (source: ${s.passages[0]?.heading ?? 'IBBU'})`;
+    const body = s.passages
+      .map(p => (s.type === 'document' && p.heading ? `(${p.heading}) ` : '') + p.content)
+      .join('\n[…]\n');
+    return `[${s.n}] ${label}\n${body}`;
+  }).join('\n\n');
+}
+
+/** What the client is shown for each source (no passage text). */
+export function publicSources(sources) {
+  return sources.map(s => ({
+    n:      s.n,
+    type:   s.type,
+    title:  s.title,
+    detail: s.type === 'builtin' ? (s.passages[0]?.heading ?? null)
+          : s.type === 'document' ? (s.passages[0]?.heading ?? null)
+          : s.type === 'kb' ? s.topic : null,
+    url:    s.url ?? null,
+    date:   s.date ?? null,
+  }));
+}
+
+const DOC_CHUNK_CHARS   = 1200;
+const DOC_CONTEXT_CHARS = 9000;
+
+/**
+ * Picks the parts of one document most relevant to the query, kept in
+ * document order. Short documents are sent whole. Returns null if the
+ * document doesn't exist or has no extracted text.
+ */
+export async function searchDocument(documentId, query) {
+  const result = await db.query('SELECT id, name, content FROM documents WHERE id = $1', [documentId]);
+  const doc = result.rows[0];
+  if (!doc || !doc.content?.trim()) return null;
+
+  const text = doc.content.replace(/[ \t]+/g, ' ').replace(/\n{3,}/g, '\n\n').trim();
+  if (text.length <= DOC_CONTEXT_CHARS) return { name: doc.name, context: text };
+
+  // Split on paragraph breaks, packing paragraphs into ~DOC_CHUNK_CHARS chunks
+  const chunks = [];
+  let current = '';
+  for (const para of text.split(/\n\n/)) {
+    if (current && current.length + para.length > DOC_CHUNK_CHARS) { chunks.push(current); current = ''; }
+    current += (current ? '\n\n' : '') + para;
+    while (current.length > DOC_CHUNK_CHARS * 2) { chunks.push(current.slice(0, DOC_CHUNK_CHARS)); current = current.slice(DOC_CHUNK_CHARS); }
+  }
+  if (current) chunks.push(current);
+
+  const queryTokens = tokenize(query);
+  const picked = new Set([0]); // the opening usually says what the document is
+  let used = chunks[0].length;
+  const ranked = chunks
+    .map((c, i) => ({ i, s: score(queryTokens, tokenize(c)) }))
+    .filter(c => c.s > 0)
+    .sort((a, b) => b.s - a.s);
+  for (const { i } of ranked) {
+    if (used + chunks[i].length > DOC_CONTEXT_CHARS) continue;
+    picked.add(i);
+    used += chunks[i].length;
   }
 
-  const ranked = candidates
-    .filter(c => c.score >= 1)
-    .sort((a, b) => b.score - a.score)
-    .slice(0, topK);
-
-  return {
-    chunks:    ranked.map(c => c.chunk),
-    sources:   ranked.map(c => c.source),
-    foundInKB: ranked.length > 0,
-  };
+  const context = [...picked].sort((a, b) => a - b)
+    .map((i, n, arr) => (n > 0 && arr[n - 1] !== i - 1 ? '[…]\n' : '') + chunks[i])
+    .join('\n\n');
+  return { name: doc.name, context };
 }

@@ -1,8 +1,7 @@
 export default function TypingIndicator() {
   return (
     <div className="flex gap-3 flex-row animate-msgSlideIn" role="status" aria-label="IbbulAI is thinking">
-      <img src="/logo.png" alt="" className="w-8 h-8 rounded-full object-cover flex-shrink-0 border-2 shadow-sm"
-           style={{ borderColor: '#e8f5e8' }} />
+      <img src="/logo.png" alt="" className="hidden sm:block w-7 h-7 rounded-full object-cover flex-shrink-0" />
       <div className="flex items-center gap-2 px-1">
         <div className="flex gap-1">
           {[0, 1, 2].map(i => (

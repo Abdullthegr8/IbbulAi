@@ -1,17 +1,15 @@
 /**
- * LLM Provider Abstraction
- * Switch via admin settings (stored in system_config table).
- * Falls back to .env if DB not available.
+ * LLM client — Groq, with one fixed model.
+ * The model is set by GROQ_MODEL in server/.env (not changeable from the UI).
  */
 
 import Groq from 'groq-sdk';
-import { getConfig } from '../services/configService.js';
 
-const DEFAULT_PROVIDER = 'groq';
-const DEFAULT_MODEL    = 'qwen/qwen3-32b';
+const DEFAULT_MODEL = 'qwen/qwen3.8-27b';
 
-// Models offered in the admin settings panel
-export const GROQ_MODELS = ['qwen/qwen3-32b', 'llama-3.1-8b-instant', 'compound-beta'];
+export function activeModel() {
+  return process.env.GROQ_MODEL || DEFAULT_MODEL;
+}
 
 let _groq = null;
 
@@ -26,7 +24,7 @@ function groqClient() {
 
 // Reasoning models that accept Groq's `reasoning_format` parameter
 function supportsReasoningFormat(model) {
-  return /qwen3|deepseek-r1/i.test(model);
+  return /qwen3|deepseek-r1|gpt-oss/i.test(model);
 }
 
 /**
@@ -41,45 +39,44 @@ export function splitThinking(text = '') {
   return { answer, reasoning: thoughts.filter(Boolean).join('\n\n') };
 }
 
-const providers = {
-  async groq(messages) {
-    const model = getConfig('groq_model') || DEFAULT_MODEL;
-    const res = await groqClient().chat.completions.create({
-      model,
-      messages,
-      temperature: 0.6,
-      // Reasoning tokens count toward this limit, so leave room for the answer
-      max_tokens: 4096,
-      ...(supportsReasoningFormat(model) && { reasoning_format: 'parsed' }),
-    });
+/**
+ * With `onReasoning` / `onContent` callbacks the reply is streamed and the
+ * callbacks receive each piece as it arrives; the full reply is returned either way.
+ */
+export async function chat(messages, { signal, onReasoning, onContent } = {}) {
+  const model = activeModel();
+  const params = {
+    model,
+    messages,
+    temperature: 0.6,
+    // Reasoning tokens count toward this limit, so leave room for the answer
+    max_tokens: 4096,
+    ...(supportsReasoningFormat(model) && { reasoning_format: 'parsed' }),
+  };
 
-    const msg = res.choices[0].message;
-    const { answer, reasoning: inlineReasoning } = splitThinking(msg.content || '');
-    return {
-      text:      answer,
-      reasoning: (msg.reasoning || inlineReasoning || '').trim(),
-      provider:  'Groq',
-      model,
-    };
-  },
-};
-
-export const SUPPORTED_PROVIDERS = Object.keys(providers);
-
-export async function chat(messages) {
-  let provider = getConfig('llm_provider') || DEFAULT_PROVIDER;
-  if (!providers[provider]) {
-    // Don't let a bad saved setting take the whole chatbot down
-    console.warn(`[LLM] Provider "${provider}" is not implemented — falling back to ${DEFAULT_PROVIDER}`);
-    provider = DEFAULT_PROVIDER;
+  let content = '', reasoning = '';
+  if (onReasoning || onContent) {
+    const stream = await groqClient().chat.completions.create({ ...params, stream: true }, { signal });
+    for await (const chunk of stream) {
+      const delta = chunk.choices[0]?.delta || {};
+      if (delta.reasoning) { reasoning += delta.reasoning; onReasoning?.(delta.reasoning); }
+      if (delta.content)   { content   += delta.content;   onContent?.(delta.content); }
+    }
+  } else {
+    const res = await groqClient().chat.completions.create(params, { signal });
+    content   = res.choices[0].message.content || '';
+    reasoning = res.choices[0].message.reasoning || '';
   }
-  return providers[provider](messages);
+
+  const { answer, reasoning: inlineReasoning } = splitThinking(content);
+  return {
+    text:      answer,
+    reasoning: (reasoning || inlineReasoning || '').trim(),
+    provider:  'Groq',
+    model,
+  };
 }
 
 export function getProviderInfo() {
-  const provider = getConfig('llm_provider') || DEFAULT_PROVIDER;
-  return {
-    provider: providers[provider] ? provider : DEFAULT_PROVIDER,
-    model:    getConfig('groq_model') || DEFAULT_MODEL,
-  };
+  return { provider: 'groq', model: activeModel() };
 }

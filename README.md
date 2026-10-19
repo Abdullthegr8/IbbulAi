@@ -15,9 +15,9 @@
 ## Features
 
 - **Natural language chat** — ask questions in plain English, receive formatted markdown responses
-- **IBBU knowledge base** — 16 verified university-specific entries, searched before calling the LLM
+- **Knowledge base first (RAG)** — built-in entries, staff KB entries, uploaded documents and announcements are indexed into passages and searched with PostgreSQL full-text search before the LLM is called; answers cite their sources
 - **Rich markdown responses** — headers, numbered steps, bullet points, bold, blockquotes
-- **Groq LLM** — powered by `qwen/qwen3-32b` (Qwen3 32B)
+- **Groq LLM** — powered by `qwen/qwen3.8-27b` (Qwen3.8 27B)
 - **Document retrieval** — upload, search, preview, and download documents via Cloudinary
 - **Persistent settings** — admin settings saved to PostgreSQL `system_config` table, applied instantly
 - **Guest access** — prospective students can use the chatbot without an account
@@ -25,7 +25,15 @@
 - **Staff auth** — register with work email
 - **Role-based access** — students chat; staff manage documents and KB; admin has full access
 - **Model reasoning** — a collapsible "Thought process" panel shows the model's reasoning above each answer
-- **Pluggable LLM layer** — Groq is implemented; OpenAI / Claude providers are planned
+- **Streaming answers** — replies appear word by word, with a Stop button
+- **Saved conversations** — students and staff can reopen past chats from a history sidebar
+- **Ask about a document** — chat with a single uploaded document; answers come only from its text
+- **Honest "I don't know"** — unverified questions are routed to the right office and flagged for staff
+- **Feedback** — thumbs up / down on every answer
+- **Announcements** — staff notices shown to users and used by the bot as its newest information
+- **Staff inbox** — unanswered and unhelpful questions, turned into knowledge base entries in one step
+- **Analytics** — usage by day, hour, topic and user type, plus answer-quality rates
+- **Fixed LLM** — Groq `qwen/qwen3.8-27b`, set by `GROQ_MODEL` in `server/.env`
 
 ---
 
@@ -47,7 +55,7 @@
 | Frontend | React 18, TypeScript, Tailwind CSS, Vite |
 | Backend | Node.js, Express.js |
 | Database | PostgreSQL |
-| LLM | Groq (`qwen/qwen3-32b`) |
+| LLM | Groq (`qwen/qwen3.8-27b`) |
 | Storage | Cloudinary V2 |
 | Auth | JWT |
 
@@ -85,8 +93,7 @@ Client: **http://localhost:3000** · Server: **http://localhost:5001** (5000 is 
 ```env
 # LLM
 GROQ_API_KEY=gsk_your_key_here
-GROQ_MODEL=qwen/qwen3-32b
-LLM_PROVIDER=groq
+GROQ_MODEL=qwen/qwen3.8-27b   # fixed model; not changeable from the UI
 
 # Database
 DATABASE_URL=postgresql://postgres:password@localhost:5432/unibot
@@ -122,8 +129,6 @@ CREATE TABLE system_config (
 ```
 
 Configurable settings:
-- LLM provider (`groq` | `openai` | `claude`)
-- Groq model (default: `qwen/qwen3-32b`)
 - Web search fallback (enabled/disabled)
 - RAG top-K results (3 / 5 / 10)
 - Max file upload size
@@ -164,7 +169,7 @@ ibbulai/
 │   ├── routes/              # Express routes
 │   ├── services/            # RAG, Cloudinary, configService
 │   ├── middleware/          # Auth, upload, error handling
-│   ├── providers/           # LLM abstraction (Groq/OpenAI/Claude)
+│   ├── providers/           # Groq LLM client
 │   └── database/            # PostgreSQL init + chatLogs
 │
 ├── README.md

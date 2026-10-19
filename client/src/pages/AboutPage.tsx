@@ -1,6 +1,6 @@
 const techStack = [
   'React + TypeScript', 'TailwindCSS', 'Node.js + Express',
-  'PostgreSQL', 'Groq LLM (Qwen3 32B)', 'RAG Pipeline',
+  'PostgreSQL', 'Groq LLM (Qwen3.8 27B)', 'RAG Pipeline',
   'Cloudinary', 'JWT Auth',
 ]
 
@@ -24,9 +24,9 @@ export default function AboutPage() {
             </p>
             <p>
               It uses <strong className="text-gray-800">Retrieval-Augmented Generation (RAG)</strong> to search
-              a structured university knowledge base first. The LLM layer is provider-agnostic — currently powered
-              by <strong className="text-gray-800">Groq (Qwen3 32B)</strong>, with plug-and-play support for
-              OpenAI and Anthropic Claude.
+              a structured university knowledge base first, then answers with
+              <strong className="text-gray-800"> Groq (Qwen3.8 27B)</strong> using only what it found — and says so
+              when the knowledge base has no verified answer.
             </p>
           </div>
 

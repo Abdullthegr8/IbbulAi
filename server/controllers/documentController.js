@@ -6,10 +6,12 @@ import { db } from '../database/init.js';
 import { ALLOWED_MIMETYPES } from '../middleware/upload.js';
 import { cloudinaryEnabled, uploadBuffer, deleteFile } from '../services/cloudinary.js';
 import { extractText } from '../services/textExtract.js';
+import { indexDocument, removeFromIndex } from '../services/kbIndex.js';
 
 const UPLOAD_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'uploads');
 
-const PUBLIC_COLUMNS = 'id, name, category, description, cloudinary_url, mimetype, size, created_at, updated_at';
+// `searchable`: has extracted text, so the chatbot can answer questions about it
+const PUBLIC_COLUMNS = "id, name, category, description, cloudinary_url, mimetype, size, created_at, updated_at, (content IS NOT NULL AND content <> '') AS searchable";
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 function cleanText(value, max) {
@@ -63,6 +65,7 @@ export async function uploadDocument(req, res) {
      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING ${PUBLIC_COLUMNS}`,
     [name, category, description, cloudinaryPublicId, cloudinaryUrl, filePath, mimetype, size, content]
   );
+  if (content) await indexDocument({ ...result.rows[0], content });
   res.status(201).json({ success: true, document: result.rows[0], searchable: content.length > 0 });
 }
 
@@ -81,6 +84,9 @@ export async function updateDocument(req, res) {
     [...keys.map(k => fields[k]), req.params.id]
   );
   if (!result.rows[0]) return res.status(404).json({ error: 'Document not found' });
+  // Name, category and description are searched too, so re-index
+  const full = await db.query('SELECT id, name, category, description, content, created_at FROM documents WHERE id = $1', [req.params.id]);
+  if (full.rows[0]?.content) await indexDocument(full.rows[0]);
   res.json({ success: true, document: result.rows[0] });
 }
 
@@ -92,6 +98,7 @@ export async function deleteDocument(req, res) {
   );
   const doc = result.rows[0];
   if (!doc) return res.status(404).json({ error: 'Document not found' });
+  await removeFromIndex('document', req.params.id);
 
   try {
     if (doc.cloudinary_public_id) await deleteFile(doc.cloudinary_public_id, doc.mimetype);
