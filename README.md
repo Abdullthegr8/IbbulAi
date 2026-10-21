@@ -155,7 +155,7 @@ ALTER TABLE chat_logs ADD COLUMN IF NOT EXISTS user_id UUID REFERENCES users(id)
 
 ## Deploying to Vercel
 
-The repo deploys as one Vercel project: the React app is served as a static site and the Express server runs as a serverless function under `/api` (`api/index.js`, configured in `vercel.json`).
+The repo deploys as one Vercel project with two [services](https://vercel.com/docs/services), defined in `vercel.json`: `client` (the Vite app, public at `/`) and `server` (the Express app, public at `/api/*`, which it receives with the `/api` prefix intact). The client calls the API at relative `/api` URLs, so neither service needs a binding.
 
 1. Import the GitHub repo in Vercel (**Add New → Project**). Leave the framework as **Other** and the root directory as `./` — build settings come from `vercel.json`.
 2. Add the environment variables from `server/.env`, with these differences:

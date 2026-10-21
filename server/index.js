@@ -102,7 +102,7 @@ function init() {
   return _init;
 }
 
-// Vercel imports the app from api/index.js and handles requests itself
+// On Vercel (the "server" service in vercel.json) the platform handles requests itself
 export default app;
 
 if (!ON_VERCEL) {
