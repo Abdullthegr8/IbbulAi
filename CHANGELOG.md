@@ -20,6 +20,7 @@ All notable changes to IbbulAI are documented here.
 - **Model switching** — the LLM provider / model settings are gone from the dashboard and API; the model is fixed by `GROQ_MODEL` in `server/.env`
 
 ### Fixed
+- **Server crashed on Vercel at startup** — PDF text extraction now uses `unpdf` (pdf.js built for serverless) instead of `pdf-parse`, whose native canvas dependency isn't available there; it's loaded only when a PDF is uploaded
 - Visiting `/admin` while signed out now goes to the admin sign-in (it went to the staff sign-in, which rejects admin credentials)
 
 ---

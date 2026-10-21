@@ -4,7 +4,6 @@
  */
 
 import mammoth from 'mammoth';
-import { PDFParse } from 'pdf-parse';
 
 const MAX_CHARS = 200_000;
 
@@ -12,13 +11,10 @@ export async function extractText(buffer, mimetype) {
   try {
     let text = '';
     if (mimetype === 'application/pdf') {
-      const parser = new PDFParse({ data: buffer });
-      try {
-        // Drop the "-- 1 of 3 --" page markers pdf-parse inserts
-        text = (await parser.getText()).text.replace(/^-- \d+ of \d+ --$/gm, '');
-      } finally {
-        await parser.destroy();
-      }
+      // unpdf is pdf.js built for serverless (no native canvas package), loaded
+      // only when needed so a PDF problem can't stop the server from starting
+      const { extractText: extractPdfText } = await import('unpdf');
+      text = (await extractPdfText(new Uint8Array(buffer))).text.join('\n\n');
     } else if (mimetype === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document') {
       text = (await mammoth.extractRawText({ buffer })).value;
     } else if (mimetype === 'text/plain') {
